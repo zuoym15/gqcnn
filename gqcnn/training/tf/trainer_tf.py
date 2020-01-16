@@ -10,20 +10,16 @@ distributions. Contact The Office of Technology Licensing, UC Berkeley, 2150
 Shattuck Avenue, Suite 510, Berkeley, CA 94720-1620, (510) 643-7201,
 otl@berkeley.edu,
 http://ipira.berkeley.edu/industry-info for commercial licensing opportunities.
-
 IN NO EVENT SHALL REGENTS BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT, SPECIAL,
 INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, ARISING OUT OF
 THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF REGENTS HAS BEEN
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 REGENTS SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
 THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
 PURPOSE. THE SOFTWARE AND ACCOMPANYING DOCUMENTATION, IF ANY, PROVIDED
 HEREUNDER IS PROVIDED "AS IS". REGENTS HAS NO OBLIGATION TO PROVIDE
 MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
-
 Trains a GQ-CNN network using Tensorflow backend.
-
 Author
 ------
 Vishal Satish & Jeff Mahler
@@ -128,9 +124,11 @@ class GQCNNTrainerTF(object):
         self.cfg["dataset_dir"] = self.dataset_dir
         self.cfg["split_name"] = self.split_name
 
+        # p = mp.Process(target=self._load_and_enqueue, args=(0, ))
+        # p = mp.Process(target=self.opening_test)
+
     def _create_loss(self):
         """Creates a loss based on config file.
-
         Returns
         -------
         :obj:`tensorflow Tensor`
@@ -168,7 +166,6 @@ class GQCNNTrainerTF(object):
 
     def _create_optimizer(self, loss, batch, var_list, learning_rate):
         """Create optimizer based on config file.
-
         Parameters
         ----------
         loss : :obj:`tensorflow Tensor`
@@ -180,7 +177,6 @@ class GQCNNTrainerTF(object):
             weights).
         learning_rate : float
             Learning rate for training.
-
         Returns
         -------
         :obj:`tf.train.Optimizer`
@@ -254,7 +250,6 @@ class GQCNNTrainerTF(object):
 
     def finetune(self, base_model_dir):
         """Perform fine-tuning.
-
         Parameters
         ----------
         base_model_dir : str
@@ -265,7 +260,6 @@ class GQCNNTrainerTF(object):
 
     def _finetune(self, base_model_dir):
         """Perform fine-tuning.
-
         Parameters
         ----------
         base_model_dir : str
@@ -355,23 +349,30 @@ class GQCNNTrainerTF(object):
             self._cleanup()
             exit(0)
 
-        signal.signal(signal.SIGINT, handler)
+        # signal.signal(signal.SIGINT, handler)
 
         # Now that everything in our graph is set up, we write the graph to the
         # summary event so it can be visualized in Tensorboard.
         self.summary_writer.add_graph(self.gqcnn.tf_graph)
 
+        # self._load_and_enqueue_single_batch(self._seed)
+
+        # self.logger.info("Finished debugging load_and_enqueue...")
+
+        # print(self.prefetch_q.qsize())
+
         # Begin optimization loop.
         try:
             # Start prefetch queue workers.
             self.prefetch_q_workers = []
-            seed = self._seed
-            for i in range(self.num_prefetch_q_workers):
-                if self.num_prefetch_q_workers > 1 or not self._debug:
-                    seed = np.random.randint(GeneralConstants.SEED_SAMPLE_MAX)
-                p = mp.Process(target=self._load_and_enqueue, args=(seed, ))
-                p.start()
-                self.prefetch_q_workers.append(p)
+            # seed = self._seed
+            # for i in range(self.num_prefetch_q_workers):
+            #     if self.num_prefetch_q_workers > 1 or not self._debug:
+            #         seed = np.random.randint(GeneralConstants.SEED_SAMPLE_MAX)
+            #     p = mp.Process(target=self._load_and_enqueue, args=(seed, ))
+            #     # p = mp.Process(target=self.opening_test)
+            #     p.start()
+            #     self.prefetch_q_workers.append(p)
 
             # Init TF variables.
             init = tf.global_variables_initializer()
@@ -389,6 +390,10 @@ class GQCNNTrainerTF(object):
             for step in training_range:
                 # Run optimization.
                 step_start = time.time()
+                
+                self._load_and_enqueue_single_batch(self._seed)
+                # print('loading data takes {:.2f} sec'.format(time.time() - step_start))
+
                 if self._angular_bins > 0:
                     images, poses, labels, masks = self.prefetch_q.get()
                     _, l, ur_l, lr, predictions, raw_net_output = \
@@ -423,34 +428,36 @@ class GQCNNTrainerTF(object):
                             },
                             options=GeneralConstants.timeout_option)
                 step_stop = time.time()
-                self.logger.info("Step took {} sec.".format(
-                    str(round(step_stop - step_start, 3))))
 
-                if self.training_mode == TrainingMode.REGRESSION:
-                    self.logger.info("Max " + str(np.max(predictions)))
-                    self.logger.info("Min " + str(np.min(predictions)))
-                elif self.cfg["loss"] != "weighted_cross_entropy":
-                    if self._angular_bins == 0:
-                        ex = np.exp(raw_net_output - np.tile(
-                            np.max(raw_net_output, axis=1)[:, np.newaxis],
-                            [1, 2]))
-                        softmax = ex / np.tile(
-                            np.sum(ex, axis=1)[:, np.newaxis], [1, 2])
+                if step % self.log_frequency == 0:
+                    self.logger.info("Step took {} sec.".format(
+                        str(round(step_stop - step_start, 3))))
 
-                        self.logger.info("Max " + str(np.max(softmax[:, 1])))
-                        self.logger.info("Min " + str(np.min(softmax[:, 1])))
+                    if self.training_mode == TrainingMode.REGRESSION:
+                        self.logger.info("Max " + str(np.max(predictions)))
+                        self.logger.info("Min " + str(np.min(predictions)))
+                    elif self.cfg["loss"] != "weighted_cross_entropy":
+                        if self._angular_bins == 0:
+                            ex = np.exp(raw_net_output - np.tile(
+                                np.max(raw_net_output, axis=1)[:, np.newaxis],
+                                [1, 2]))
+                            softmax = ex / np.tile(
+                                np.sum(ex, axis=1)[:, np.newaxis], [1, 2])
+
+                            self.logger.info("Max " + str(np.max(softmax[:, 1])))
+                            self.logger.info("Min " + str(np.min(softmax[:, 1])))
+                            self.logger.info("Pred nonzero " +
+                                            str(np.sum(softmax[:, 1] > 0.5)))
+                            self.logger.info("True nonzero " + str(np.sum(labels)))
+
+                    else:
+                        sigmoid = 1.0 / (1.0 + np.exp(-raw_net_output))
+                        self.logger.info("Max " + str(np.max(sigmoid)))
+                        self.logger.info("Min " + str(np.min(sigmoid)))
                         self.logger.info("Pred nonzero " +
-                                         str(np.sum(softmax[:, 1] > 0.5)))
-                        self.logger.info("True nonzero " + str(np.sum(labels)))
-
-                else:
-                    sigmoid = 1.0 / (1.0 + np.exp(-raw_net_output))
-                    self.logger.info("Max " + str(np.max(sigmoid)))
-                    self.logger.info("Min " + str(np.min(sigmoid)))
-                    self.logger.info("Pred nonzero " +
-                                     str(np.sum(sigmoid > 0.5)))
-                    self.logger.info("True nonzero " +
-                                     str(np.sum(labels > 0.5)))
+                                        str(np.sum(sigmoid > 0.5)))
+                        self.logger.info("True nonzero " +
+                                        str(np.sum(labels > 0.5)))
 
                 if np.isnan(l) or np.any(np.isnan(poses)):
                     self.logger.error(
@@ -461,8 +468,9 @@ class GQCNNTrainerTF(object):
                 if step % self.log_frequency == 0:
                     elapsed_time = time.time() - start_time
                     start_time = time.time()
-                    self.logger.info("Step {} (epoch {}), {} s".format(
+                    self.logger.info("Step {}/{} (epoch {}), {} s".format(
                         step,
+                        training_range,
                         str(
                             round(
                                 step * self.train_batch_size / self.num_train,
@@ -615,6 +623,7 @@ class GQCNNTrainerTF(object):
                 os.path.join(self.model_dir, GQCNNFilenames.FINAL_MODEL))
 
         except Exception as e:
+            print(e)
             self._cleanup()
             raise e
 
@@ -764,6 +773,17 @@ class GQCNNTrainerTF(object):
                                                self.gripper_mode)
                 np.save(pose_mean_filename, self.pose_mean)
                 np.save(pose_std_filename, self.pose_std)
+
+            #### new code: turn pose_mean and pose_std into 1 dim ####
+
+            # if self.gripper_mode == GripperMode.LEGACY_PARALLEL_JAW:
+            #     self.pose_mean = self.pose_mean[2:3]
+            #     self.pose_std  = self.pose_std[2:3]
+
+            # else:
+            #     raise ValueError("Gripper mode '{}' not supported.".format(self.gripper_mode))
+
+            #### end new code ####
 
             # Update GQ-CNN instance.
             self.gqcnn.set_pose_mean(self.pose_mean)
@@ -1340,6 +1360,7 @@ class GQCNNTrainerTF(object):
     def _flush_prefetch_queue(self):
         """Flush prefetch queue."""
         self.logger.info("Flushing prefetch queue...")
+        print(self.prefetch_q.qsize())
         for i in range(self.prefetch_q.qsize()):
             self.prefetch_q.get()
 
@@ -1376,12 +1397,208 @@ class GQCNNTrainerTF(object):
         # Setup summaries for visualizing metrics in Tensorboard.
         self._setup_summaries()
 
-    def _load_and_enqueue(self, seed):
+    def opening_test(self):
+        print('start opening dataset')
+        dataset = TensorDataset.open(self.dataset_dir)
+        print('done opening dataset')
+
+    def _load_and_enqueue_single_batch(self, seed): # single thread data loader
         """Loads and enqueues a batch of images for training."""
 
         # When the parent process receives a SIGINT, it will itself handle
         # cleaning up child processes.
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        # signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+        # Set the random seed explicitly to prevent all workers from possible
+        # inheriting the same seed on process initialization.
+        # np.random.seed(seed)
+        # random.seed(seed)
+        # don't set them in this single thread version! or all batchs have same input...
+
+        # Open dataset.
+        # dataset = TensorDataset.open(self.dataset_dir)
+        dataset = self.dataset
+
+        # while not self.term_event.is_set():
+            # Loop through data.
+        num_queued = 0
+        start_i = 0
+        end_i = 0
+        file_num = 0
+        queue_start = time.time()
+
+        # Init buffers.
+        train_images = np.zeros([
+            self.train_batch_size, self.im_height, self.im_width,
+            self.im_channels
+        ]).astype(np.float32)
+        train_poses = np.zeros([self.train_batch_size,
+                                self.pose_dim]).astype(np.float32)
+        train_labels = np.zeros(self.train_batch_size).astype(
+            self.numpy_dtype)
+        if self._angular_bins > 0:
+            train_pred_mask = np.zeros(
+                (self.train_batch_size, self._angular_bins * 2),
+                dtype=bool)
+
+        while start_i < self.train_batch_size:
+            # Compute num remaining.
+            num_remaining = self.train_batch_size - num_queued
+
+            # Generate tensor index uniformly at random.
+            file_num = np.random.choice(self.num_tensors, size=1)[0]
+
+            read_start = time.time()
+            train_images_tensor = dataset.tensor(self.im_field_name,
+                                                    file_num)
+            train_poses_tensor = dataset.tensor(self.pose_field_name,
+                                                file_num)
+            train_labels_tensor = dataset.tensor(self.label_field_name,
+                                                    file_num)
+            read_stop = time.time()
+            self.logger.debug("Reading data took {} sec".format(
+                str(round(read_stop - read_start, 3))))
+            self.logger.debug("File num: {}".format(file_num))
+
+            # Get batch indices uniformly at random.
+            train_ind = self.train_index_map[file_num]
+            np.random.shuffle(train_ind)
+            if self.gripper_mode == GripperMode.LEGACY_SUCTION:
+                tp_tmp = read_pose_data(train_poses_tensor.data,
+                                        self.gripper_mode)
+                train_ind = train_ind[np.isfinite(tp_tmp[train_ind, 1])]
+
+            # Filter positives and negatives.
+            if self.training_mode == TrainingMode.CLASSIFICATION and \
+                    self.pos_weight != 0.0:
+                labels = 1 * (train_labels_tensor.arr > self.metric_thresh)
+                np.random.shuffle(train_ind)
+                filtered_ind = []
+                for index in train_ind:
+                    if labels[index] == 0 and np.random.rand(
+                    ) < self.neg_accept_prob:
+                        filtered_ind.append(index)
+                    elif labels[index] == 1 and np.random.rand(
+                    ) < self.pos_accept_prob:
+                        filtered_ind.append(index)
+                train_ind = np.array(filtered_ind)
+
+            # Samples train indices.
+            upper = min(num_remaining, train_ind.shape[0],
+                        self.max_training_examples_per_load)
+            ind = train_ind[:upper]
+            num_loaded = ind.shape[0]
+            if num_loaded == 0:
+                self.logger.warning("Queueing zero examples!!!!")
+                continue
+
+            # Subsample data.
+            train_images_arr = train_images_tensor.arr[ind, ...]
+            train_poses_arr = train_poses_tensor.arr[ind, ...]
+            angles = train_poses_arr[:, 3]
+            train_label_arr = train_labels_tensor.arr[ind]
+            num_images = train_images_arr.shape[0]
+
+            # Resize images.
+            rescale_factor = self.im_height / train_images_arr.shape[1]
+            if rescale_factor != 1.0:
+                resized_train_images_arr = np.zeros([
+                    num_images, self.im_height, self.im_width,
+                    self.im_channels
+                ]).astype(np.float32)
+                for i in range(num_images):
+                    for c in range(train_images_arr.shape[3]):
+                        resized_train_images_arr[i, :, :, c] = sm.imresize(
+                            train_images_arr[i, :, :, c],
+                            rescale_factor,
+                            interp="bicubic",
+                            mode="F")
+                train_images_arr = resized_train_images_arr
+
+            # Add noises to images.
+            train_images_arr, train_poses_arr = self._distort(
+                train_images_arr, train_poses_arr)
+
+            # Slice poses.
+            train_poses_arr = read_pose_data(train_poses_arr,
+                                                self.gripper_mode)
+
+            # Standardize inputs and outputs.
+            if self._norm_inputs:
+                train_images_arr = (train_images_arr -
+                                    self.im_mean) / self.im_std
+                if self.gqcnn.input_depth_mode == \
+                        InputDepthMode.POSE_STREAM:
+                    train_poses_arr = (train_poses_arr -
+                                        self.pose_mean) / self.pose_std
+            train_label_arr = 1 * (train_label_arr > self.metric_thresh)
+            train_label_arr = train_label_arr.astype(self.numpy_dtype)
+
+            if self._angular_bins > 0:
+                bins = np.zeros_like(train_label_arr)
+                # Form prediction mask to use when calculating loss.
+                neg_ind = np.where(angles < 0)
+                angles = np.abs(angles) % self._max_angle
+                angles[neg_ind] *= -1
+                g_90 = np.where(angles > (self._max_angle / 2))
+                l_neg_90 = np.where(angles < (-1 * (self._max_angle / 2)))
+                angles[g_90] -= self._max_angle
+                angles[l_neg_90] += self._max_angle
+                # TODO(vsatish): Actually fix this.
+                angles *= -1  # Hack to fix reverse angle convention.
+                angles += (self._max_angle / 2)
+                train_pred_mask_arr = np.zeros(
+                    (train_label_arr.shape[0], self._angular_bins * 2))
+                for i in range(angles.shape[0]):
+                    bins[i] = angles[i] // self._bin_width
+                    train_pred_mask_arr[
+                        i, int((angles[i] // self._bin_width) * 2)] = 1
+                    train_pred_mask_arr[
+                        i, int((angles[i] // self._bin_width) * 2 + 1)] = 1
+
+            # Compute the number of examples loaded.
+            num_loaded = train_images_arr.shape[0]
+            end_i = start_i + num_loaded
+
+            # print(self.gripper_mode)
+            # print(train_poses_arr.shape)
+            # print(train_poses.shape)
+            # sys.stdout.flush()
+
+            # Enqueue training data batch.
+            train_images[start_i:end_i, ...] = train_images_arr.copy()
+            train_poses[start_i:end_i, :] = train_poses_arr.copy()
+            train_labels[start_i:end_i] = train_label_arr.copy()
+            if self._angular_bins > 0:
+                train_pred_mask[start_i:end_i] = train_pred_mask_arr.copy()
+
+            # Update start index.
+            start_i = end_i
+            num_queued += num_loaded
+
+        # Send data to queue.
+        if not self.term_event.is_set():
+            try:
+                if self._angular_bins > 0:
+                    self.prefetch_q.put_nowait(
+                        (train_images, train_poses, train_labels,
+                            train_pred_mask))
+                else:
+                    self.prefetch_q.put_nowait(
+                        (train_images, train_poses, train_labels))
+            except Queue.Full:
+                time.sleep(GeneralConstants.QUEUE_SLEEP)
+            queue_stop = time.time()
+            self.logger.debug("Queue batch took {} sec".format(
+                str(round(queue_stop - queue_start, 3))))
+
+    def _load_and_enqueue(self, seed):
+        """Loads and enqueues a batch of images for training."""
+        print('Subprocess Started!')
+
+        # When the parent process receives a SIGINT, it will itself handle
+        # cleaning up child processes.
+        # signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         # Set the random seed explicitly to prevent all workers from possible
         # inheriting the same seed on process initialization.
@@ -1389,7 +1606,8 @@ class GQCNNTrainerTF(object):
         random.seed(seed)
 
         # Open dataset.
-        dataset = TensorDataset.open(self.dataset_dir)
+        # dataset = TensorDataset.open(self.dataset_dir)
+        dataset = self.dataset
 
         while not self.term_event.is_set():
             # Loop through data.
@@ -1431,6 +1649,8 @@ class GQCNNTrainerTF(object):
                 self.logger.debug("Reading data took {} sec".format(
                     str(round(read_stop - read_start, 3))))
                 self.logger.debug("File num: {}".format(file_num))
+
+                print('im here!')
 
                 # Get batch indices uniformly at random.
                 train_ind = self.train_index_map[file_num]
@@ -1532,6 +1752,11 @@ class GQCNNTrainerTF(object):
                 num_loaded = train_images_arr.shape[0]
                 end_i = start_i + num_loaded
 
+                # print(self.gripper_mode)
+                # print(train_poses_arr.shape)
+                # print(train_poses.shape)
+                # sys.stdout.flush()
+
                 # Enqueue training data batch.
                 train_images[start_i:end_i, ...] = train_images_arr.copy()
                 train_poses[start_i:end_i, :] = train_poses_arr.copy()
@@ -1624,7 +1849,6 @@ class GQCNNTrainerTF(object):
 
     def _error_rate_in_batches(self, num_files_eval=None, validation_set=True):
         """Compute error and loss over either training or validation set.
-
         Returns
         -------
         :obj:"autolab_core.BinaryClassificationResult`
